@@ -323,6 +323,7 @@ export default function UploadModal() {
     console.table(preHashes); // <== lihat "Skin/Male/Noir.png" vs "Skin/Female/Noir.png"
 
     const formData = new FormData();
+    formData.append("clear", "true"); // Always clear for fresh project upload
     upFiles.forEach((u, idx) => {
       // Wajib: pakai fieldname "files:<rel>" persis seperti backend baca
       formData.append(`files:${u.rel}`, u.file);

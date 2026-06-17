@@ -90,7 +90,8 @@ const AppImage = forwardRef<HTMLImageElement, AppImageProps>(
         ? "transition-all ease-in-out hover:scale-90 hover:bg-gray-200"
         : "",
       rounded ? `rounded-${rounded}` : "",
-      pixelated ? "[image-rendering:pixelated]" : "",
+      // Ensure the image is always centered in its container
+      "mx-auto block",
       fitClass,
       className,
     ]
@@ -116,20 +117,33 @@ const AppImage = forwardRef<HTMLImageElement, AppImageProps>(
       : {
           src: finalSrc,
           alt,
-          width: width ?? 1,
-          height: height ?? 1,
+          width: width ?? 1080, // Default to high res for traits
+          height: height ?? 1080,
           sizes,
           quality,
           priority,
           placeholder,
           blurDataURL,
-          className: `w-full h-auto ${extra}`,
-          style: { width: "100%", height: "auto", ...style },
+          className: `max-w-full max-h-full ${extra}`,
+          style: { width: "auto", height: "auto", ...style },
           unoptimized,
           ...rest,
         };
 
-    return <Image {...imageProps} />;
+    return (
+      /* eslint-disable-next-line @next/next/no-img-element */
+      <img
+        src={imageProps.src as string}
+        alt={imageProps.alt}
+        className={imageProps.className}
+        style={{
+          ...imageProps.style,
+          imageRendering: pixelated ? "pixelated" : "auto",
+        }}
+        width={imageProps.width as number}
+        height={imageProps.height as number}
+      />
+    );
   }
 );
 

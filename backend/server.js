@@ -95,7 +95,7 @@ const { generateOneNFT } = require("./generator");
 const { generateAllNFT, getProgress, cancelGenerate } = require("./generator");
 
 const app = express();
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 
 // if (process.env.NODE_ENV !== "production") {
 //   const morgan = require("morgan");
@@ -1309,6 +1309,25 @@ app.get("/api/traits-tree", (_req, res) => {
   }
 });
 
+// ===== /api/reset-all (DANGEROUS) =====
+app.post("/api/reset-all", async (req, res) => {
+  try {
+    console.log("!!! RESETTING ALL TRAITS AND RULES !!!");
+    await fs.emptyDir(LAYERS_DIR);
+    const emptyRules = {
+      weights: {},
+      showTo: {},
+      specific: [],
+      tags: {},
+      contextOverrides: {},
+    };
+    writeJsonIfChangedSync(rulesPath, emptyRules);
+    res.json({ success: true, message: "All traits and rules have been reset." });
+  } catch (e) {
+    res.status(500).json({ error: "Reset failed", detail: String(e.message || e) });
+  }
+});
+
 // ===== /api/upload-traits (VERBOSE LOGGING) =====
 const crypto = require("crypto");
 const os = require("os");
@@ -1347,7 +1366,23 @@ app.post(
   async (req, res) => {
     // Log hasil parsing multer
     try {
+      const { clear } = req.body || {};
       const files = Array.isArray(req.files) ? req.files : [];
+
+      if (clear === "true") {
+        console.log("!!! CLEARING LAYERS DIRECTORY !!!");
+        await fs.emptyDir(layersPath);
+        // Reset rules juga kalau mau fresh start
+        const emptyRules = {
+          weights: {},
+          showTo: {},
+          specific: [],
+          tags: {},
+          contextOverrides: {},
+        };
+        writeJsonIfChangedSync(traitRulesPath, emptyRules);
+      }
+
       console.log("---- Multer parsed ----");
       console.log("files.length =", files.length);
       if (!files.length) {
@@ -1495,35 +1530,9 @@ app.post(
         await fs.mkdir(path.dirname(dst), { recursive: true });
 
         try {
-          // 'wx' = fail kalau file sudah ada (biar gak overwrite diam-diam)
-          await fs.outputFile(dst, buf, { flag: "wx" });
+          // Ganti flag 'wx' jadi default (overwrite) agar user bisa upload traits baru
+          await fs.outputFile(dst, buf);
         } catch (e) {
-          if (e && e.code === "EEXIST") {
-            // sudah ada → cek hash di disk
-            const exist = await fs.readFile(dst);
-            const sha1Disk = crypto
-              .createHash("sha1")
-              .update(exist)
-              .digest("hex");
-            if (sha1Disk !== sha1) {
-              // beda konten → kasih 409 (biar user sadar)
-              return res.status(409).json({
-                error: "target exists with different content",
-                rel,
-                from,
-              });
-            }
-            // sama persis → skip tulis
-            debugList.push({
-              rel,
-              from,
-              bytes: size,
-              sha1,
-              dst,
-              note: "already-exists-same-content",
-            });
-            continue;
-          }
           console.error("outputFile failed:", e);
           return res
             .status(500)

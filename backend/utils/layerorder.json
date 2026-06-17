@@ -1,1 +1,9 @@
-["Face", "Head", "Outfit", "Skin", "Background"]
+[
+  "Head",
+  "Eyes",
+  "Mouth",
+  "Outfit",
+  "Body",
+  "Accesories",
+  "Bg"
+]

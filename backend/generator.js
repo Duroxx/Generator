@@ -461,9 +461,13 @@ function parseAttrPair(attr) {
   const raw = String(attr.value ?? "");
   const parts = raw.split(" - ");
   if (parts.length >= 2) {
-    return { trait: t, value: parts.slice(1).join(" - "), context: parts[0] };
+    return {
+      trait: t,
+      value: sanitize(parts.slice(1).join(" - ")),
+      context: sanitize(parts[0]),
+    };
   }
-  return { trait: t, value: raw, context: "" };
+  return { trait: t, value: sanitize(raw), context: "" };
 }
 function normRuleNode(obj) {
   return {
@@ -608,11 +612,6 @@ async function generateOneNFT(
   );
   const seenCombos = opts.seenCombos instanceof Set ? opts.seenCombos : null; // optional
 
-  // kanvas kecil (pixel base)
-  const canvas = createCanvas(BASE_W, BASE_H);
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = false;
-
   // Tag Rule Engine state (tetap)
   const tagIndex =
     (opts && opts.tagIndex) || buildTagIndex(traitRules, fileIndex);
@@ -728,7 +727,6 @@ async function generateOneNFT(
     await checkpoint();
 
     // RESET semua state agar reroll bener-bener fresh
-    ctx.clearRect(0, 0, BASE_W, BASE_H);
     const attributes = [];
     const chosenByTrait = {};
     const selectedAttributes = [];
@@ -818,6 +816,8 @@ async function generateOneNFT(
         let violatedRule = null;
         const violates = rulesList.some((ruleRaw) => {
           const rule = normRule(ruleRaw);
+
+          // Fix logic: ensure comparison is done with sanitized values
           const samePrimary =
             rule.trait === candNorm.trait &&
             rule.value === candNorm.value &&
@@ -828,7 +828,7 @@ async function generateOneNFT(
             const hit = ruleRaw.exclude_with.some((exRaw) => {
               const ex = normRule(exRaw);
               return selectedAttributes.some((a) => {
-                const A = parseAttr(a);
+                const A = parseAttrPair(a); // use parseAttrPair consistently
                 return (
                   A.trait === ex.trait &&
                   A.value === ex.value &&
@@ -1029,25 +1029,19 @@ async function generateOneNFT(
       }
     }
 
+    // SHARP-BASED PIXEL PERFECT COMPOSITION
+    const layerFiles = [];
     for (const trait of drawOrder) {
       await checkpoint();
       const traitSan = sanitize(trait);
       if (skipSet.has(traitSan)) {
-        // skip this trait entirely (do not draw nor include attribute)
-        console.log(
-          `[DRAW-SKIP] skipping trait ${trait} due to context override`
-        );
         continue;
       }
 
       const picked = chosenByTrait[traitSan];
       if (!picked) continue;
 
-      const img = await loadImageCached(picked.path);
-      await checkpoint();
-      const ctx2d = canvas.getContext("2d");
-      ctx2d.imageSmoothingEnabled = false;
-      ctx2d.drawImage(img, 0, 0, BASE_W, BASE_H);
+      layerFiles.push(picked.path);
 
       attributes.push({
         trait_type: traitSan,
@@ -1057,21 +1051,49 @@ async function generateOneNFT(
       });
     }
 
+    if (layerFiles.length === 0) return null;
+
     // Tags map dan metadata (tetap)
     const tagsMap = _resolveTagsMap(traitRules, attributes);
     const filename = `${token_id}.png`;
     await fs.ensureDir(path.join(__dirname, "output", "images"));
 
-    const smallPng = canvas.toBuffer("image/png");
     const { OUT_W, OUT_H } = resolveOutSize(opts);
-    const bigPng = await sharp(smallPng)
-      .resize(OUT_W, OUT_H, { kernel: sharp.kernel.nearest })
-      .png()
+
+    // Use Sharp for composition to ensure pixel perfection
+    // 1. Start with the base layer
+    // 🧠 Force Sharp to NOT resample or optimize during initial load
+    let sharpInstance = sharp(layerFiles[0]);
+    
+    // 2. Composite all subsequent layers
+    if (layerFiles.length > 1) {
+      sharpInstance = sharpInstance.composite(
+        layerFiles.slice(1).map(f => ({ 
+          input: f,
+          blend: 'over' // Strict alpha over blending
+        }))
+      );
+    }
+
+    // 3. Final resize with nearest neighbor to preserve pixels
+    // 🧠 We also disable any image smoothing and set strict nearest kernel
+    const finalBuffer = await sharpInstance
+      .resize(OUT_W, OUT_H, { 
+        kernel: sharp.kernel.nearest,
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
+      })
+      .png({ 
+        compressionLevel: 9, 
+        adaptiveFiltering: false, 
+        palette: true, // Force palette mode for crisp colors
+        quality: 100 
+      })
       .toBuffer();
 
     await fs.writeFile(
       path.join(__dirname, "output", "images", filename),
-      bigPng
+      finalBuffer
     );
 
     // Helper: pecah "ctx - value" -> { ctx, val }
@@ -1124,10 +1146,15 @@ async function generateOneNFT(
       }
     }
 
+    // Load project info for metadata
+    let projectInfo = { namePrefix: "NFT" };
+    try {
+      projectInfo = JSON.parse(fs.readFileSync(path.join(__dirname, "utils", "project.json"), "utf-8"));
+    } catch (_) {}
+
     const metadata = {
-      name: `Parodee #${token_id}`,
-      description:
-        'The NFT collection that proves the world has officially lost it, so we might as well lose it together. Forget deep philosophies or overpromised roadmaps. Here, we’re just selling pixels, cheap jokes, and god-tier sarcasm.\n\nEach NFT in Parodee is a visual meme disguised as serious art, just enough to make people question if it’s a masterpiece or an expensive joke. If you’re looking for utility, congrats! this NFT has exactly one function, to remind you that you just spent money on a funny picture that (probably) does nothing.\n\nThis collection was born out of boredom, a pinch of social revenge, and a noble mission to prove that "absurd sells". So get your wallet ready, brace yourself, and welcome to Parodee',
+      name: `${projectInfo.namePrefix} #${token_id}`,
+      description: projectInfo.description || `${projectInfo.namePrefix} Collection`,
       image: ipfsUri(filename),
       token_id,
       attributes: metaAttrs,
@@ -1172,6 +1199,7 @@ async function generateAllNFT(startId, count, contextTags = [], opts = {}) {
 
   try {
     assertNotCancelled();
+    currentProgress.isGenerating = true; // Ensure status is set
 
     const drawOrder = readDrawOrder();
     const traitRules = fs.existsSync(
@@ -1227,9 +1255,15 @@ async function generateAllNFT(startId, count, contextTags = [], opts = {}) {
 
       await fs.copy(src, dst);
 
+      // Load project info for custom token metadata
+      let projectInfo = { namePrefix: "NFT" };
+      try {
+        projectInfo = JSON.parse(fs.readFileSync(path.join(__dirname, "utils", "project.json"), "utf-8"));
+      } catch (_) {}
+
       // metadata — kalau GIF tambahkan animation_url
       const meta = {
-        name: item.name || `Parodee #${token_id}`,
+        name: item.name || `${projectInfo.namePrefix} #${token_id}`,
         token_id,
         image: ipfsUri(outImageName),
         ...(ext === ".gif" ? { animation_url: ipfsUri(outImageName) } : {}),
