@@ -1,5 +1,4 @@
 [build]
-  base = "generatoor/frontend"
   publish = ".next"
   command = "npm run build"
 
