@@ -26,9 +26,9 @@ function DynamicImage({
   alt: string;
   className?: string;
 }) {
-  if (!src) return null;
-  const isGif = src.toLowerCase().endsWith(".gif");
+  const isGif = src?.toLowerCase().endsWith(".gif") || false;
   const [fallback, setFallback] = useState(isGif);
+  if (!src) return null;
   if (fallback) return <img src={src} alt={alt} className={className} />;
   return (
     <Image
