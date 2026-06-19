@@ -20,12 +20,13 @@ function resolveOutSize(opts = {}) {
   return { OUT_W: Math.max(1, w | 0), OUT_H: Math.max(1, h | 0) };
 }
 
-// Tuning sharp for Cloud Environments (Render/Netlify)
-// We use less memory and lower concurrency to avoid OOM crashes
-sharp.cache(false); // Disable cache to keep memory usage low
-sharp.concurrency(1); // Force single thread for reliability on limited CPU instances
+// Tuning sharp for Local PC (High Performance)
+sharp.cache({ memory: 512, files: 100, items: 500 });
+sharp.concurrency(
+  Math.max(1, Math.min(8, Number(process.env.SHARP_THREADS) || 4))
+);
 
-const MAX_IMG_CACHE = Number(process.env.IMG_CACHE_MAX || 100);
+const MAX_IMG_CACHE = Number(process.env.IMG_CACHE_MAX || 200);
 const imageCache = new Map(); // key: absPath -> Promise<Image>
 
 async function loadImageCached(absPath) {
@@ -1226,8 +1227,8 @@ async function generateAllNFT(startId, count, contextTags = [], opts = {}) {
     await fs.emptyDir(path.join(__dirname, "output", "images"));
     await fs.emptyDir(path.join(__dirname, "output", "metadata"));
 
-    // Reduced concurrency for cloud stability
-    const concurrency = Math.max(1, Number(process.env.GEN_CONCURRENCY) || 2);
+    // High performance concurrency for local PC
+    const concurrency = Math.max(1, Number(process.env.GEN_CONCURRENCY) || 8);
     const limit = pLimit(concurrency);
 
     // === NEW: state anti-duplicate untuk sesi ini ===
